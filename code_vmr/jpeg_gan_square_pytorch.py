@@ -6,17 +6,18 @@ import torchvision.datasets as datasets
 import torch.nn.functional as F
 from matplotlib import pyplot as plt
 import torch
-
-from custom_modelCompose import ComposedModel
+import math
+import pandas as pd
+import argparse
 
 from art.estimators.classification import BlackBoxClassifierNeuralNetwork
 from art.attacks.evasion import SquareAttack
-import math
-import pandas as pd
+
+from modelCompose import ComposedModel
 
 
 def black_box_score_attack(data):
-    output = model(torch.from_numpy(data).cuda()).detach().cpu().numpy()
+    output = model(torch.from_numpy(data).cuda()).detach().cpu().clone().numpy()
     return output
 
 
@@ -32,6 +33,12 @@ if __name__ == '__main__':
     MULTI_GAN = True
     BATCH_SIZE = 1
     NORM = 2
+
+
+    parser = argparse.ArgumentParser(description="Run square attack.", usage='Use -h for more information.')
+    parser.add_argument("--start", type=int, help="Image to start with")
+    args = parser.parse_args()
+    start = args.start
 
     print(f" GPU: {torch.cuda.current_device()}")
     print(' Model - {}\n Defence - {}\n Num images - {}\n QF - {}\n Delta QF - {}\n Model iterations {}\n'.format(BASE_MODEL, DEFENCE, K, QF, DELTA_QF, MODEL_ITERATIONS))
@@ -68,15 +75,20 @@ if __name__ == '__main__':
     attack = SquareAttack(estimator=estimator, norm=NORM, eps=0.08, max_iter=5000, nb_restarts=1, p_init=0.1, batch_size=BATCH_SIZE, max_queries=5000) # p_init: 0.1 for L2 and 0.05 for L_inf
 
     for count, (data, target) in enumerate(dataloader):
+        if count < start:
+            continue
         start_time = time.time()
 
-        if count >= K:
+        if count >= K + start:
             # Exit after K batches
             break
+
 
         data_cuda = data.cuda()
         data_cpu = data.detach().cpu().clone().numpy()
         target = target.cuda()
+        target_cpu = target.detach().cpu().clone().numpy()
+
 
         # Get original classification
         output_orig = model(data_cuda)
@@ -85,19 +97,8 @@ if __name__ == '__main__':
         correct_orig = (pred_orig.T == target.cpu().numpy()).sum()
 
         # Square attack
-        adv_img = attack.generate(data_cpu)
-        output_adv = model(torch.from_numpy(adv_img).cuda())
-        loss_adv = F.nll_loss(output_adv, target, reduction='sum').item()
-        pred_adv = output_adv.argmax(dim=1, keepdim=True).detach().cpu().numpy()
-        correct_adv = (pred_adv.T == target.cpu().numpy()).sum()
-
-        # plt.imshow(np.transpose(data_cpu.squeeze(), (1, 2, 0)))
-        # plt.title(f"Original {count}")
-        # plt.show(block=False)
-        # plt.imshow(np.transpose(adv_img.squeeze(), (1, 2, 0)))
-        # plt.title(f"Adversarial image metric L{norm}: {l2}")
-        # plt.show(block=False)
-
+        adv_img = attack.generate(x=data_cpu)
+        pred_adv = np.argmax(attack.old_y_pred, axis=1)
 
         if NORM == 2:
             perturbation = np.linalg.norm(np.reshape(data_cpu - adv_img, -1)) / np.linalg.norm(np.reshape(data_cpu, -1))
@@ -111,13 +112,18 @@ if __name__ == '__main__':
             print("L_inf error: ", perturbation)
             perturbation_metric = "L_inf metric"
 
+        # plt.imshow(np.transpose(data_cpu.squeeze(), (1, 2, 0)))
+        # plt.title(f"Original {count}")
+        # plt.show(block=False)
+        # plt.imshow(np.transpose(adv_img.squeeze(), (1, 2, 0)))
+        # plt.title(f"Adversarial image {perturbation_metric}: {perturbation}")
+        # plt.show(block=False)
 
         num_queries = attack.num_queries
 
         column_names = ["Correct label", "Predicted label", "Adversarial label", perturbation_metric, "Num queries", "Time (s)"]
         for t, po, pa in zip(target, pred_orig, pred_adv):
             print(f'=== Batch {count} - target {t.item()} - pred orig {po.item()} - pred adv {pa.item()} ===')
-        print(f"Correct original: {correct_orig}")
         elapsed_time = time.time() - start_time
         print(f'Took {elapsed_time}s')
 
@@ -125,20 +131,8 @@ if __name__ == '__main__':
         result = [[target.detach().cpu().numpy().squeeze(), pred_orig.squeeze(), pred_adv.squeeze(), perturbation, num_queries, elapsed_time]]
         df = pd.DataFrame(result)
 
-        if not os.path.isfile(f"results_square_{DEFENCE}_defence.csv"):
+        if not os.path.isfile(f"results_square_{DEFENCE}_defence_start_{start}_K_{K}.csv"):
             df.columns = column_names
-            df.to_csv(f"results_square_{DEFENCE}_defence.csv", index=False)
+            df.to_csv(f"results_square_{DEFENCE}_defence_start_{start}_K_{K}.csv", index=False)
         else:
-            df.to_csv(f"results_square_{DEFENCE}_defence.csv", header=False, mode="a", index=False)
-
-        '''
-        assert BATCH_SIZE == 1
-        for bi, _ in enumerate(range(BATCH_SIZE)):
-            result_dict = {'idx': count * BATCH_SIZE + bi,
-                           'original_pred': pred_orig[bi],
-                           'img_cls': target[bi].cpu().numpy(),
-                           'final_pred': pred_adv[bi],
-                           "L2": l2}
-            results.append(result_dict)
-    
-        '''
+            df.to_csv(f"results_square_{DEFENCE}_defence_start_{start}_K_{K}.csv", header=False, mode="a", index=False)
