@@ -32,10 +32,10 @@ if __name__ == '__main__':
     IMAGES_PATH = "/thecube/students/lagnolucci/val_by_class/"
     K = 100
     QF = 40
-    DEFENCE = None
+    DEFENCE = "gan"
     JPEG_PASS = 1
-    DELTA_QF = 0
-    MODEL_ITERATIONS = 1
+    DELTA_QF = 20
+    MODEL_ITERATIONS = 3
     MULTI_GAN = True
     BATCH_SIZE = 1
     NORM = 2
